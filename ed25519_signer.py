@@ -63,7 +63,10 @@ def keypair_from_seed(seed: bytes) -> tuple[bytes, bytes]:
 
 
 def generate_keypair() -> tuple[bytes, bytes]:
-    return keypair_from_seed(secrets.token_bytes(32))
+    while True:
+        private_key, public_key = keypair_from_seed(secrets.token_bytes(32))
+        if public_key[0] not in (0x00, 0xFF):
+            return private_key, public_key
 
 
 def derive_public_key(private_key: bytes) -> bytes:
@@ -182,7 +185,9 @@ class Dictionary:
             seen.add(token)
             clean.append(token)
         self.tokens = tuple(clean)
-        self.dict_id = hashlib.sha256(b"\x00".join(self.tokens)).digest()[0]
+        self.dict_id = int.from_bytes(
+            hashlib.sha256(b"\x00".join(self.tokens)).digest()[:2], "little"
+        )
         self._trie: dict[int, dict] = {}
         for token_id, token in enumerate(self.tokens):
             node = self._trie
@@ -235,7 +240,7 @@ class Dictionary:
         n = len(data)
         while i < n:
             match_len, token_id = self._match(data, i)
-            hex_len = self._hex_run(data, i)
+            hex_len = min(self._hex_run(data, i), 255)
             hex_save = hex_len - (2 + (hex_len + 1) // 2) if hex_len >= 4 else -1
             token_save = match_len - 1 if match_len else -1
 
@@ -333,7 +338,7 @@ def build_blob(
         raise ValueError("timestamp must fit in uint32")
     payload = (
         timestamp.to_bytes(4, "little")
-        + bytes([dictionary.dict_id])
+        + dictionary.dict_id.to_bytes(2, "little")
         + dictionary.encode(text)
     )
     signature = sign_message(payload, private_key, public_key)
@@ -342,25 +347,30 @@ def build_blob(
 
 
 def open_blob(
-    blob: bytes, public_key: bytes, dictionary: Dictionary
+    blob: bytes,
+    public_key: bytes,
+    dictionary: Dictionary,
+    max_size: int | None = MAX_BLOB_SIZE,
 ) -> tuple[bytes, int]:
-    if len(blob) < 4 + 1 + SIGNATURE_SIZE:
+    if max_size and len(blob) > max_size:
+        raise BlobError(f"blob is {len(blob)} bytes, limit is {max_size}")
+    if len(blob) < 4 + 2 + SIGNATURE_SIZE:
         raise BlobError("blob is too short")
     ciphertext = blob[:-SIGNATURE_SIZE]
     signature = blob[-SIGNATURE_SIZE:]
     payload = _xor(ciphertext, _keystream(signature[:32], len(ciphertext)))
     if not verify_message(signature, payload, public_key):
         raise BlobError("invalid signature")
-    if len(payload) < 5:
+    if len(payload) < 6:
         raise BlobError("payload is too short")
     timestamp = int.from_bytes(payload[:4], "little")
-    dict_id = payload[4]
+    dict_id = int.from_bytes(payload[4:6], "little")
     if dict_id != dictionary.dict_id:
         raise BlobError(
-            f"dictionary mismatch (blob {dict_id:02x}, local {dictionary.dict_id:02x})"
+            f"dictionary mismatch (blob {dict_id:04x}, local {dictionary.dict_id:04x})"
         )
     try:
-        text = dictionary.decode(payload[5:])
+        text = dictionary.decode(payload[6:])
     except CompressionError as exc:
         raise BlobError(f"cannot decompress: {exc}") from exc
     return text, timestamp
@@ -384,7 +394,9 @@ def write_key_files(
             if path.exists():
                 raise FileExistsError(f"{path} already exists (use --force)")
     private_path.parent.mkdir(parents=True, exist_ok=True)
-    private_path.write_text(private_key.hex() + "\n", encoding="ascii")
+    fd = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="ascii") as stream:
+        stream.write(private_key.hex() + "\n")
     os.chmod(private_path, 0o600)
     public_path.write_text(public_key.hex() + "\n", encoding="ascii")
     return private_path, public_path
@@ -394,12 +406,12 @@ def default_dictionary_path() -> Path:
     env = os.environ.get("ED25519_SIGNER_DICTIONARY")
     if env:
         return Path(env)
-    cwd = Path.cwd() / DICTIONARY_NAME
-    if cwd.is_file():
-        return cwd
     local = Path(__file__).resolve().parent / DICTIONARY_NAME
     if local.is_file():
         return local
+    cwd = Path.cwd() / DICTIONARY_NAME
+    if cwd.is_file():
+        return cwd
     raise FileNotFoundError(f"{DICTIONARY_NAME} not found; pass --dictionary")
 
 
@@ -424,8 +436,6 @@ def _write_blob(path: str, blob: bytes, fmt: str) -> None:
 
 
 def _write_text(path: str, text: bytes) -> None:
-    if text and not text.endswith(b"\n"):
-        text += b"\n"
     if path == "-":
         sys.stdout.buffer.write(text)
         sys.stdout.buffer.flush()
@@ -464,7 +474,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     dictionary = Dictionary.load(args.dictionary or default_dictionary_path())
     public_key = load_public_key(args.pub)
     blob = _read_message(args.input, args.format)
-    text, timestamp = open_blob(blob, public_key, dictionary)
+    text, timestamp = open_blob(blob, public_key, dictionary, args.max_size)
     if args.max_age is not None:
         now = int(time.time()) & 0xFFFFFFFF
         age = now - timestamp
@@ -502,8 +512,9 @@ def build_parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify", help="verify a blob and decompress its text")
     verify.add_argument("--pub", required=True, metavar="FILE", help="public key file")
     verify.add_argument("--in", dest="input", default="-", metavar="FILE", help="blob or hex (default: stdin)")
-    verify.add_argument("--format", choices=("bin", "hex"), default="bin", help="input format")
+    verify.add_argument("--format", choices=("bin", "hex"), default="hex", help="input format")
     verify.add_argument("--out", default="-", metavar="FILE", help="output text (default: stdout)")
+    verify.add_argument("--max-size", type=int, default=MAX_BLOB_SIZE, help="maximum blob size, 0 disables")
     verify.add_argument("--max-age", type=int, help="maximum allowed age in seconds")
     verify.add_argument("--show-timestamp", action="store_true", help="print timestamp to stderr")
     verify.add_argument("--dictionary", metavar="FILE", help="dictionary file")

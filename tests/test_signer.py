@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,13 @@ MESHCORE_MESSAGE = b"meshcore-test-vector"
 MESHCORE_SIGNATURE = bytes.fromhex(
     "6fe52b003b2ea749663bf50f6476bf2e495634e2c54f3af38ddb518c59c75dd1"
     "aa25ae4f740422e9e2941380cab400057e6f53cab411db076381f3b6fbf7aa08"
+)
+# Cross-checked with a C program using MeshCore's lib/ed25519 and SHA-512,
+# for the fixed 3-token dictionary below.
+GOLDEN_BLOB = bytes.fromhex(
+    "14f2cebc2ee880c9c3c9802fc0694a9d57184392dffad6f63964bccb4dd0f303"
+    "dd34e09f6fcb028f213bb1993d24f63d28a546060765c0cc6e98a5a3e93c32bb"
+    "e0d8901cdfa2235a0a"
 )
 
 
@@ -68,6 +76,20 @@ class KeyTests(unittest.TestCase):
         second = signer.keypair_from_seed(bytes(range(32)))
         self.assertEqual(first, second)
 
+    def test_keygen_skips_meshcore_rejected_prefix(self):
+        bad_seed = bytes.fromhex(
+            "6301000000000000000000000000000000000000000000000000000000000000"
+        )
+        good_seed = bytes(32)
+        self.assertEqual(signer.keypair_from_seed(bad_seed)[1][0], 0)
+        with mock.patch(
+            "ed25519_signer.secrets.token_bytes",
+            side_effect=[bad_seed, good_seed],
+        ):
+            private_key, public_key = signer.generate_keypair()
+        self.assertEqual((private_key, public_key), signer.keypair_from_seed(good_seed))
+        self.assertNotIn(public_key[0], (0x00, 0xFF))
+
 
 class DictionaryTests(unittest.TestCase):
     @classmethod
@@ -76,7 +98,8 @@ class DictionaryTests(unittest.TestCase):
 
     def test_dictionary_loads(self):
         self.assertLessEqual(len(self.dictionary.tokens), 254)
-        self.assertIsInstance(self.dictionary.dict_id, int)
+        self.assertGreaterEqual(self.dictionary.dict_id, 0)
+        self.assertLessEqual(self.dictionary.dict_id, 0xFFFF)
         self.assertEqual(len(set(self.dictionary.tokens)), len(self.dictionary.tokens))
 
     def test_roundtrip(self):
@@ -104,9 +127,24 @@ class DictionaryTests(unittest.TestCase):
         text = b"set prv.key " + b"a" * 128
         self.assertLess(len(self.dictionary.encode(text)), len(text))
 
+    def test_hex_runs_above_255(self):
+        for length in (255, 256, 510):
+            text = b"a" * length
+            encoded = self.dictionary.encode(text)
+            self.assertEqual(self.dictionary.decode(encoded), text)
+
     def test_duplicate_token_rejected(self):
         with self.assertRaises(signer.DictionaryError):
             signer.Dictionary([b"a", b"a"])
+
+    def test_token_limit(self):
+        signer.Dictionary([bytes([i]) for i in range(1, 255)])
+        with self.assertRaises(signer.DictionaryError):
+            signer.Dictionary([bytes([i]) for i in range(1, 256)])
+
+    def test_bad_escape_rejected(self):
+        with self.assertRaises(signer.DictionaryError):
+            signer._unescape("\\q")
 
     def test_dict_id_changes_with_tokens(self):
         changed = signer.Dictionary(self.dictionary.tokens[:-1] + (b"zzz",))
@@ -163,6 +201,39 @@ class BlobTests(unittest.TestCase):
         blob = self.make_blob(b"A" * 200)
         self.assertGreater(len(blob), 160)
 
+    def test_open_blob_rejects_oversize_by_default(self):
+        blob = self.make_blob(b"A" * 200)
+        with self.assertRaises(signer.BlobError):
+            signer.open_blob(blob, self.public_key, self.dictionary)
+        text, timestamp = signer.open_blob(
+            blob, self.public_key, self.dictionary, max_size=0
+        )
+        self.assertEqual(text, b"A" * 200)
+        self.assertEqual(timestamp, 1700000000)
+
+    def test_golden_blob(self):
+        dictionary = signer.Dictionary([b"get", b" ", b"name"])
+        blob = signer.build_blob(
+            b"get name",
+            MESHCORE_PRIVATE,
+            MESHCORE_PUBLIC,
+            dictionary,
+            1700000000,
+        )
+        self.assertEqual(blob, GOLDEN_BLOB)
+        self.assertEqual(
+            signer.open_blob(blob, MESHCORE_PUBLIC, dictionary),
+            (b"get name", 1700000000),
+        )
+
+    def test_empty_text(self):
+        blob = self.make_blob(b"")
+        self.assertEqual(len(blob), 70)
+        self.assertEqual(
+            signer.open_blob(blob, self.public_key, self.dictionary),
+            (b"", 1700000000),
+        )
+
 
 class CliTests(unittest.TestCase):
     def setUp(self):
@@ -174,7 +245,7 @@ class CliTests(unittest.TestCase):
     def keygen(self):
         result = run_cli("keygen", "--out", str(self.prefix))
         self.assertEqual(result.returncode, 0, result.stderr.decode())
-        return self.prefix.with_suffix(".priv"), self.prefix.with_suffix(".pub")
+        return Path(f"{self.prefix}.priv"), Path(f"{self.prefix}.pub")
 
     def test_keygen_writes_files(self):
         private_path, public_path = self.keygen()
@@ -248,7 +319,197 @@ class CliTests(unittest.TestCase):
             "hex",
         )
         self.assertEqual(result.returncode, 0, result.stderr.decode())
-        self.assertEqual(result.stdout, b"get name\n")
+        self.assertEqual(result.stdout, b"get name")
+
+    def test_sign_verify_defaults(self):
+        private_path, public_path = self.keygen()
+        command = self.dir / "command.txt"
+        command.write_bytes(b"get name")
+        blob_path = self.dir / "blob.hex"
+        result = run_cli(
+            "sign",
+            "--key",
+            str(private_path),
+            "--in",
+            str(command),
+            "--out",
+            str(blob_path),
+            "--timestamp",
+            "1700000000",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        result = run_cli(
+            "verify",
+            "--pub",
+            str(public_path),
+            "--in",
+            str(blob_path),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, b"get name")
+
+    def test_verify_output_is_exact(self):
+        private_path, public_path = self.keygen()
+        command = self.dir / "command.txt"
+        command.write_bytes(b"get name")
+        blob_path = self.dir / "blob.bin"
+        text_path = self.dir / "text.out"
+        result = run_cli(
+            "sign",
+            "--key",
+            str(private_path),
+            "--in",
+            str(command),
+            "--out",
+            str(blob_path),
+            "--out-format",
+            "bin",
+            "--timestamp",
+            "1700000000",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        result = run_cli(
+            "verify",
+            "--pub",
+            str(public_path),
+            "--in",
+            str(blob_path),
+            "--format",
+            "bin",
+            "--out",
+            str(text_path),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(text_path.read_bytes(), b"get name")
+
+    def test_verify_rejects_oversize_blob(self):
+        private_path, public_path = self.keygen()
+        command = self.dir / "command.txt"
+        command.write_bytes(b"A" * 200)
+        blob_path = self.dir / "blob.bin"
+        result = run_cli(
+            "sign",
+            "--key",
+            str(private_path),
+            "--in",
+            str(command),
+            "--out",
+            str(blob_path),
+            "--out-format",
+            "bin",
+            "--max-size",
+            "0",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertGreater(blob_path.stat().st_size, 160)
+        result = run_cli(
+            "verify",
+            "--pub",
+            str(public_path),
+            "--in",
+            str(blob_path),
+            "--format",
+            "bin",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(b"limit", result.stderr)
+        result = run_cli(
+            "verify",
+            "--pub",
+            str(public_path),
+            "--in",
+            str(blob_path),
+            "--format",
+            "bin",
+            "--max-size",
+            "0",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, b"A" * 200)
+
+    def test_malformed_hex_input(self):
+        private_path, _ = self.keygen()
+        command = self.dir / "command.txt"
+        command.write_bytes(b"abc")
+        result = run_cli(
+            "sign",
+            "--key",
+            str(private_path),
+            "--in",
+            str(command),
+            "--format",
+            "hex",
+            "--out",
+            str(self.dir / "blob.bin"),
+            "--out-format",
+            "bin",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b"hex", result.stderr)
+
+    def test_invalid_timestamp(self):
+        private_path, _ = self.keygen()
+        command = self.dir / "command.txt"
+        command.write_bytes(b"get name")
+        for timestamp in ("-1", "4294967296"):
+            result = run_cli(
+                "sign",
+                "--key",
+                str(private_path),
+                "--in",
+                str(command),
+                "--out",
+                str(self.dir / "blob.bin"),
+                "--out-format",
+                "bin",
+                "--timestamp",
+                timestamp,
+            )
+            self.assertEqual(result.returncode, 2)
+
+    def test_max_age(self):
+        private_path, public_path = self.keygen()
+        command = self.dir / "command.txt"
+        command.write_bytes(b"get name")
+        blob_path = self.dir / "blob.bin"
+        result = run_cli(
+            "sign",
+            "--key",
+            str(private_path),
+            "--in",
+            str(command),
+            "--out",
+            str(blob_path),
+            "--out-format",
+            "bin",
+            "--timestamp",
+            "1700000000",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        result = run_cli(
+            "verify",
+            "--pub",
+            str(public_path),
+            "--in",
+            str(blob_path),
+            "--format",
+            "bin",
+            "--max-age",
+            "0",
+        )
+        self.assertEqual(result.returncode, 1)
+        result = run_cli(
+            "verify",
+            "--pub",
+            str(public_path),
+            "--in",
+            str(blob_path),
+            "--format",
+            "bin",
+            "--max-age",
+            "999999999",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
 
     def test_verify_rejects_tampering(self):
         private_path, public_path = self.keygen()

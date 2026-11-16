@@ -1,175 +1,72 @@
-set
-get
-radio
-blacklist
-advert
-bridge
-region
-interval
-value
-timesync
-name
-flood
-outpath
-state
-rxps
-password
-txdelay
-clear
-path
-powersaving
-pwrmgt
-rxgain
-sensor
-source
-stats
-multiplier
-channel
-dutycycle
-neighbors
-direct
-offset
 reboot
-remove
-secret
-jail
-list
-riskyWorkingMax
-balanced
-unscoped
-max
-epoch_seconds
-pubkey_prefix
-default
-degrees
-enabled
-rxdelay
-hours
-owner
-start
-chan
-freq
-hash
-key
-conservative
-new_password
-timeout_mins
-parent_name
-permissions
-private_key
-temperature
-Europe
-allowf
-detect
-prefix
-pubkey
-repeat
-thresh
-txgain
-add
-gps
-MyRepeater
-bootloader
-bootreason
-flood_flag
-baud
-info
 clkreboot
-frequency
-overdrive
+advert
+advert.zerohop
+timesync add
+timesync remove
+timesync clear
+timesync defaults
+blacklist path add
+blacklist path rem
+blacklist path clear
+blacklist chan add
+blacklist chan rem
+blacklist chan clear
+set advert.jail
+jail clear
+set radio
+set tx
 tempradio
-allow
-delay
-erase
-guest
-multi
-reset
-token
-fem
-hex
-1a2b3c4d
-5e6f7a8b
-Repeater
-defaults
-discover
-hop1_hex
-hop2_hex
-neighbor
-poweroff
-preamble
-shutdown
-sleep_us
-minutes
-packets
-setperm
-support
-zerohop
-acks
-loop
-mode
-only
-read
-sync
-log
-off
-prv
-bootmv
-filter
-policy
-public
-setloc
-board
-clock
-denyf
-level
-north
-ridge
-rx_us
-share
-adc
-agc
-cad
-int
-lat
-lon
-put
-rem
-ver
-core
-home
-load
-null
-rate
-role
-save
-stop
-text
-time
-type
+*
 on
-618
-869
-acl
-dbm
-def
-ota
+off
+set freq
+set radio.rxgain
+set radio.fem.txgain
+set guest.password
+powersaving
+set path.hash.mode
+set loop.detect
+minimal
+moderate
+strict
+set txdelay
+set rxdelay
+set direct.txdelay
+set dutycycle
+set af
+set int.thresh
+set cad
+set agc.reset.interval
+set multi.acks
+set advert.interval
+set flood.advert.interval
+set flood.max
+set flood.max.unscoped
+set flood.max.advert
+region load
+region save
+region allowf
+region denyf
+region home
+region default
+region put
+region def
+region remove
+gps sync
 10
+868
+433
+856
+62
 \s
 !
-"
 #
 $
-%
-&
-'
 (
 )
-*
-+
-,
--
 .
-/
+,
 0
 1
 2
@@ -180,13 +77,7 @@ $
 7
 8
 9
-:
-;
-<
-=
->
 ?
-@
 A
 B
 C
@@ -217,8 +108,8 @@ Z
 \\
 ]
 ^
+-
 _
-`
 a
 b
 c

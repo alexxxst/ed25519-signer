@@ -4,3 +4,6 @@ __pycache__/
 *.priv
 *.pub
 keys/
+command.txt
+packet.bin
+.DS_Store

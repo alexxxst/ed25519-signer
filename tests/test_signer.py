@@ -117,10 +117,13 @@ class DictionaryTests(unittest.TestCase):
             self.assertEqual(self.dictionary.decode(encoded), sample, sample[:40])
 
     def test_commands_get_smaller(self):
-        self.assertLess(len(self.dictionary.encode(b"get name")), len(b"get name"))
         self.assertLess(
-            len(self.dictionary.encode(b"set radio 869.618,62.5,8,5")),
-            len(b"set radio 869.618,62.5,8,5"),
+            len(self.dictionary.encode(b"blacklist chan add 81")),
+            len(b"blacklist chan add 81"),
+        )
+        self.assertLess(
+            len(self.dictionary.encode(b"set radio 868.856,62.5,7,7")),
+            len(b"set radio 868.856,62.5,7,7"),
         )
 
     def test_long_hex_gets_smaller(self):

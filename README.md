@@ -18,6 +18,14 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
+Если `pip` падает с `ImportError: cannot import name 'cli' from 'pip._internal.cli.main'`, значит в shell глобально выставлен `PYTHONPATH` от другой версии Python. Установите так:
+
+```bash
+PYTHONPATH= .venv/bin/pip install -r requirements.txt
+```
+
+Или уберите глобальный `PYTHONPATH` из `~/.zshrc`/`~/.zprofile` — он подмешивает site-packages другой версии Python.
+
 ## Быстрый старт
 
 ```bash

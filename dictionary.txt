@@ -1,6 +1,5 @@
 reboot
 clkreboot
-advert
 advert.zerohop
 timesync add
 timesync remove

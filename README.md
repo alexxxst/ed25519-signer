@@ -7,36 +7,21 @@
 - выдавать один headerless-блоб;
 - проверять блоб публичным ключом и распаковывать текст.
 
-Единственная зависимость — `PyNaCl`. Планов, спецификаций и прочих документов в проекте нет.
+Единственная зависимость — `PyNaCl`; её ставит `uv` из метаданных в начале `ed25519_signer.py`. Планов, спецификаций и прочих документов в проекте нет.
 
-## Установка
+## Запуск
 
-Нужен Python 3.10+.
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-```
-
-Если `pip` падает с `ImportError: cannot import name 'cli' from 'pip._internal.cli.main'`, значит в shell глобально выставлен `PYTHONPATH` от другой версии Python. Установите так:
-
-```bash
-PYTHONPATH= .venv/bin/pip install -r requirements.txt
-```
-
-Или уберите глобальный `PYTHONPATH` из `~/.zshrc`/`~/.zprofile` — он подмешивает site-packages другой версии Python.
-
-## Быстрый старт
+Нужен Python 3.11+ и [uv](https://docs.astral.sh/uv/). Вручную создавать venv и ставить пакеты не нужно.
 
 ```bash
 # 1. Ключи
-./ed25519_signer.py keygen --out keys/repeater
+uv run ./ed25519_signer.py keygen --out keys/repeater
 
 # 2. Команда для подписи
 printf 'set radio 869.618,62.5,8,5\n' > command.txt
 
 # 3. Подпись в бинарный блоб
-./ed25519_signer.py sign \
+uv run ./ed25519_signer.py sign \
     --key keys/repeater.priv \
     --in command.txt \
     --format bin \
@@ -44,7 +29,7 @@ printf 'set radio 869.618,62.5,8,5\n' > command.txt
     --out-format bin
 
 # 4. Проверка и распаковка
-./ed25519_signer.py verify \
+uv run ./ed25519_signer.py verify \
     --pub keys/repeater.pub \
     --in packet.bin \
     --format bin \
@@ -61,13 +46,13 @@ printf 'set radio 869.618,62.5,8,5\n' > command.txt
 ## Команды
 
 ```text
-ed25519_signer.py keygen [--out PREFIX] [--force]
+uv run ./ed25519_signer.py keygen [--out PREFIX] [--force]
 
-ed25519_signer.py sign --key FILE [--in FILE] [--format bin|hex]
+uv run ./ed25519_signer.py sign --key FILE [--in FILE] [--format bin|hex]
     [--out FILE] [--out-format bin|hex] [--timestamp N]
     [--max-size N] [--dictionary FILE]
 
-ed25519_signer.py verify --pub FILE [--in FILE] [--format bin|hex]
+uv run ./ed25519_signer.py verify --pub FILE [--in FILE] [--format bin|hex]
     [--out FILE] [--max-size N] [--max-age N] [--show-timestamp]
     [--dictionary FILE]
 ```
@@ -84,11 +69,11 @@ ed25519_signer.py verify --pub FILE [--in FILE] [--format bin|hex]
 Пример с hex-выводом:
 
 ```bash
-./ed25519_signer.py sign \
+uv run ./ed25519_signer.py sign \
     --key keys/repeater.priv --in command.txt \
     --out packet.hex --out-format hex
 
-./ed25519_signer.py verify \
+uv run ./ed25519_signer.py verify \
     --pub keys/repeater.pub --in packet.hex --format hex
 ```
 
@@ -143,8 +128,8 @@ blacklist
 По умолчанию берётся `dictionary.txt` рядом со скриптом; файл в текущем каталоге — запасной вариант. Свой словарь передаётся явно:
 
 ```bash
-./ed25519_signer.py sign ... --dictionary my_dictionary.txt
-./ed25519_signer.py verify ... --dictionary my_dictionary.txt
+uv run ./ed25519_signer.py sign ... --dictionary my_dictionary.txt
+uv run ./ed25519_signer.py verify ... --dictionary my_dictionary.txt
 ```
 
 Прошивка должна использовать тот же словарь в том же порядке. Иначе `dict_id` не совпадёт и `verify` откажется работать.
@@ -160,7 +145,7 @@ blacklist
 ## Тесты
 
 ```bash
-python -m unittest discover -s tests -v
+uv run --with pynacl python -m unittest discover -s tests -v
 ```
 
 37 тестов: генерация ключей, сверка публичного ключа и подписи с C-реализацией MeshCore, golden-вектор блоба, round-trip словаря, длинные hex-раны, сборка/разбор блоба, порча `C`/`S`, CLI keygen/sign/verify, лимит 160 байт.

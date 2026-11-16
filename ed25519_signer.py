@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["PyNaCl>=1.6"]
+# ///
 """MeshCore-compatible Ed25519 signer with a compact command dictionary."""
 
 from __future__ import annotations
